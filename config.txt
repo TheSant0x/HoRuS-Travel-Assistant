@@ -1,3 +1,0 @@
-URI=neo4j+s://your-database-id.databases.neo4j.io
-USERNAME=neo4j
-PASSWORD=your-password

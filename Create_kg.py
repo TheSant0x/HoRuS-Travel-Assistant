@@ -1,6 +1,7 @@
 from neo4j import GraphDatabase
 import csv
 import os
+from dotenv import load_dotenv
 
 def read_config(config_file='config.txt'):
     config = {}
@@ -159,8 +160,16 @@ def compute_hotel_scores(tx):
     tx.run(query)
 
 def main():
-    config = read_config()
-    driver = GraphDatabase.driver(config['URI'], auth=(config['USERNAME'], config['PASSWORD']))
+    load_dotenv()
+    uri = os.getenv("NEO4J_URI")
+    username = os.getenv("NEO4J_USERNAME")
+    password = os.getenv("NEO4J_PASSWORD")
+    
+    if not all([uri, username, password]):
+        print("Error: Missing Neo4j credentials in .env")
+        return
+
+    driver = GraphDatabase.driver(uri, auth=(username, password))
 
     with driver.session() as session:
         print("Clearing database...")
