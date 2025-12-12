@@ -71,18 +71,10 @@ def main():
 
             # Display Results
             print("\n--- Baseline Results (Cypher) ---")
-            if baseline_results:
-                for idx, res in enumerate(baseline_results[:5]): # Show top 5
-                    print(f"{idx+1}. {res}")
-            else:
-                print("No direct matches found via Cypher.")
+            print(retriever.format_results(baseline_results))
 
             print("\n--- Semantic Search Results (Embeddings) ---")
-            if embedding_results:
-                for idx, res in enumerate(embedding_results[:3]):
-                    print(f"{idx+1}. {res.get('hotel')} (Score: {res.get('score'):.4f})")
-            else:
-                print("No semantic matches found.")
+            print(embedder.format_results(embedding_results))
             
             print("\n" + "="*50)
 
