@@ -95,3 +95,14 @@ class EmbeddingManager:
         with self.driver.session() as session:
             result = session.run(cypher, k=top_k, p_vector=query_vector)
             return [record.data() for record in result]
+
+    def format_results(self, results):
+        if not results:
+            return "No semantic matches found."
+            
+        formatted_lines = []
+        for idx, res in enumerate(results):
+            score = res.get('score', 0)
+            formatted_lines.append(f"{idx+1}. {res.get('hotel')} (Score: {score:.4f})")
+            
+        return "\n".join(formatted_lines)

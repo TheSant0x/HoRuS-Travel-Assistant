@@ -169,3 +169,14 @@ class GraphRetriever:
         with self.driver.session() as session:
             result = session.run(query, params)
             return [record.data() for record in result]
+
+    def format_results(self, results):
+        if not results:
+            return "No direct matches found via Cypher."
+        
+        formatted_lines = []
+        for idx, res in enumerate(results[:5]):
+            # Format dictionary nicely or just stringify
+            formatted_lines.append(f"{idx+1}. {res}")
+        
+        return "\n".join(formatted_lines)
