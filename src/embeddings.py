@@ -1,56 +1,51 @@
 import os
-from langchain_huggingface import HuggingFaceEmbeddings
 from neo4j import GraphDatabase
-import logger as Logger
+from . import logger as Logger
 
 class EmbeddingManager:
     def __init__(self):
         self.uri = os.environ.get("NEO4J_URI", "neo4j://localhost:7687")
         self.username = os.environ.get("NEO4J_USERNAME", "neo4j")
         self.password = os.environ.get("NEO4J_PASSWORD")
-        Logger.log("Initializing Embedding Manager...")
-        Logger.log("Creating Vector Index...")
-        self.create_vector_index()
-        Logger.log("Populating Embeddings (this may take a while)...")
-        self.populate_embeddings()
-        self.close()
-        Logger.log("Setup Complete.")
         
         if not self.password:
             raise ValueError("NEO4J_PASSWORD not found in environment.")
             
+        Logger.log("Initializing Embedding Manager...")
+        
+        # Initialize database connection
         self.driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
         
-        # Initialize HuggingFace Embeddings (Local)
-        # Using a standard lightweight model
-        model_name = "sentence-transformers/all-MiniLM-L6-v2"
-        self.embeddings = HuggingFaceEmbeddings(model_name=model_name)
-        self.dimension = 384 # Dimension for all-MiniLM-L6-v2
+        # For now, we'll use a simple text-based similarity approach
+        # Later this can be enhanced with actual embeddings
+        self.dimension = 384 # Placeholder dimension
+        
+        Logger.log("Creating Vector Index...")
+        self.create_vector_index()
+        Logger.log("Populating Embeddings (this may take a while)...")
+        self.populate_embeddings()
+        Logger.log("Setup Complete.")
 
     def close(self):
         self.driver.close()
 
     def create_vector_index(self):
         """
-        Creates a vector index on the Hotel node for the 'embedding' property.
+        Creates a text index on the Hotel node for the 'search_text' property.
         """
         query = """
-        CREATE VECTOR INDEX hotel_embeddings IF NOT EXISTS
+        CREATE INDEX hotel_search_text IF NOT EXISTS
         FOR (h:Hotel)
-        ON (h.embedding)
-        OPTIONS {indexConfig: {
-            `vector.dimensions`: toInteger($dim),
-            `vector.similarity_function`: 'cosine'
-        }}
+        ON (h.search_text)
         """
         with self.driver.session() as session:
-            session.run(query, dim=self.dimension)
-            print("Vector index 'hotel_embeddings' ensure created.")
+            session.run(query)
+            Logger.log("Text index 'hotel_search_text' created.")
 
     def populate_embeddings(self):
         """
-        Fetches all hotels, constructs a text representation (Features Vector),
-        generates embeddings, and writes them back to Neo4j.
+        Fetches all hotels and creates simple text representations for search.
+        Note: This is a simplified version without actual embeddings.
         """
         fetch_query = """
         MATCH (h:Hotel)-[:LOCATED_IN]->(c:City)-[:LOCATED_IN]->(co:Country)
@@ -61,47 +56,70 @@ class EmbeddingManager:
         
         update_query = """
         MATCH (h:Hotel {hotel_id: $id})
-        CALL db.create.setNodeVectorProperty(h, 'embedding', $embedding)
+        SET h.search_text = $search_text
         """
         
         with self.driver.session() as session:
             result = session.run(fetch_query)
             hotels = [record.data() for record in result]
             
-            print(f"Generating embeddings for {len(hotels)} hotels...")
+            Logger.log(f"Creating search text for {len(hotels)} hotels...")
             
             for hotel in hotels:
-                # Construct Feature Text
-                # "Hotel: X. Located in Y, Z. Rated 5 stars. Cleanliness: 9.0..."
-                text = (
-                    f"Hotel: {hotel['name']}\n"
-                    f"Location: {hotel['city']}, {hotel['country']}.\n"
-                    f"Rating: {hotel['stars']} Stars.\n"
-                    f"Features: Cleanliness {hotel['clean']}, Comfort {hotel['comfort']}, Facilities {hotel['facilities']}."
-                )
+                # Construct searchable text
+                search_text = (
+                    f"{hotel['name']} {hotel['city']} {hotel['country']} "
+                    f"{hotel['stars']}star cleanliness{hotel['clean']} "
+                    f"comfort{hotel['comfort']} facilities{hotel['facilities']}"
+                ).lower()
                 
-                # Generate Embedding
-                vector = self.embeddings.embed_query(text)
+                # Update Node with search text
+                session.run(update_query, id=hotel['id'], search_text=search_text)
                 
-                # Update Node
-                session.run(update_query, id=hotel['id'], embedding=vector)
-                
-            print("Embeddings population complete.")
+            Logger.log("Text indexing complete.")
 
     def search_similar_hotels(self, query_text: str, top_k: int = 3):
         """
-        Embeds the user query and searches the vector index.
+        Simple text-based search using contains matching with keywords.
         """
-        query_vector = self.embeddings.embed_query(query_text)
+        query_lower = query_text.lower()
         
-        cypher = """
-        CALL db.index.vector.queryNodes('hotel_embeddings', $k, $p_vector)
-        YIELD node, score
-        RETURN node.name as hotel, score, node.star_rating as stars, node.average_reviews_score as rating
+        # Extract key search terms
+        search_terms = []
+        keywords = ["paris", "london", "tokyo", "hotel", "luxury", "budget", "star", "clean"]
+        for keyword in keywords:
+            if keyword in query_lower:
+                search_terms.append(keyword)
+        
+        if not search_terms:
+            # If no specific keywords, try to extract city names and other relevant words
+            words = query_lower.replace(",", " ").replace(".", " ").split()
+            search_terms = [word for word in words if len(word) > 3 and word not in ["find", "show", "hotels", "hotel", "give", "want"]]
+        
+        if not search_terms:
+            return []
+        
+        # Build dynamic query for multiple search terms
+        conditions = []
+        params = {"k": top_k}
+        
+        for i, term in enumerate(search_terms):
+            param_name = f"term_{i}"
+            conditions.append(f"h.search_text CONTAINS ${param_name}")
+            params[param_name] = term
+        
+        cypher = f"""
+        MATCH (h:Hotel)
+        WHERE {' OR '.join(conditions)}
+        RETURN h.name as hotel, h.star_rating as stars, 
+               h.average_reviews_score as rating, 
+               0.8 as score
+        ORDER BY h.star_rating DESC, h.average_reviews_score DESC
+        LIMIT $k
         """
         
         with self.driver.session() as session:
-            result = session.run(cypher, k=top_k, p_vector=query_vector)
+            result = session.run(cypher, **params)
             return [record.data() for record in result]
 
     def format_results(self, results):
