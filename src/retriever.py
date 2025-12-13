@@ -11,6 +11,7 @@ class GraphRetriever:
             raise ValueError("NEO4J_PASSWORD not found in environment.")
             
         self.driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
+        self.last_queries = []  # Track executed queries for UI display
 
     def close(self):
         self.driver.close()
@@ -159,12 +160,27 @@ class GraphRetriever:
         Executes a Cypher query based on the processed intent and entities.
         """
         intent_cat = intent_obj.category
-        entities = entities_obj.dict()
+        entities = entities_obj.model_dump()
 
         query, params = self.get_query_for_intent(intent_cat, entities)
         
         if not query:
+            self.last_queries = []
             return []
+
+        # Store the query for UI display
+        formatted_query = query
+        if params:
+            # Replace parameters in query for display
+            display_query = query
+            for key, value in params.items():
+                if isinstance(value, str):
+                    display_query = display_query.replace(f"${key}", f"'{value}'")
+                else:
+                    display_query = display_query.replace(f"${key}", str(value))
+            formatted_query = display_query
+        
+        self.last_queries = [formatted_query]
 
         with self.driver.session() as session:
             result = session.run(query, params)

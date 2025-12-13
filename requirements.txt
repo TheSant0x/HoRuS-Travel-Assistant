@@ -3,3 +3,5 @@ python-dotenv
 langchain-huggingface
 huggingface_hub
 pydantic
+sentence-transformers
+streamlit
