@@ -251,13 +251,17 @@ class StreamlitTravelAssistant:
                     "error_occurred": results["error"] is not None
                 })
 
+@st.cache_resource
+def get_assistant():
+    return StreamlitTravelAssistant()
+
 def main():
     # Header
     st.markdown('<div class="main-header">Graph-RAG Travel Assistant</div>', unsafe_allow_html=True)
     st.markdown("*Powered by Neo4j Knowledge Graph and Large Language Models*")
     
     # Initialize the assistant
-    assistant = StreamlitTravelAssistant()
+    assistant = get_assistant()
     
     # Sidebar Configuration
     st.sidebar.header("Configuration")
