@@ -1,5 +1,6 @@
 import os
 from neo4j import GraphDatabase
+from sentence_transformers import SentenceTransformer
 from . import logger as Logger
 
 class EmbeddingManager:
@@ -16,36 +17,69 @@ class EmbeddingManager:
         # Initialize database connection
         self.driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
         
-        # For now, we'll use a simple text-based similarity approach
-        # Later this can be enhanced with actual embeddings
-        self.dimension = 384 # Placeholder dimension
+        # Initialize Sentence Transformer Models
+        try:
+            Logger.log("Loading Model 1: all-MiniLM-L6-v2 (384 dim)...")
+            self.model_1 = SentenceTransformer('all-MiniLM-L6-v2')
+            
+            Logger.log("Loading Model 2: paraphrase-albert-small-v2 (768 dim)...")
+            self.model_2 = SentenceTransformer('paraphrase-albert-small-v2')
+        except Exception as e:
+            Logger.log(f"Failed to load models: {e}", Logger.ERROR)
+            raise e
         
-        Logger.log("Creating Vector Index...")
-        self.create_vector_index()
+        Logger.log("Creating Vector Indices...")
+        self.create_vector_indices()
+        
         Logger.log("Populating Embeddings (this may take a while)...")
         self.populate_embeddings()
+        
         Logger.log("Setup Complete.")
 
     def close(self):
         self.driver.close()
 
-    def create_vector_index(self):
+    def create_vector_indices(self):
         """
-        Creates a text index on the Hotel node for the 'search_text' property.
+        Creates Vector Indices for both embedding models.
         """
-        query = """
-        CREATE INDEX hotel_search_text IF NOT EXISTS
-        FOR (h:Hotel)
-        ON (h.search_text)
-        """
+        queries = [
+            """
+            CREATE VECTOR INDEX hotel_embeddings IF NOT EXISTS
+            FOR (h:Hotel)
+            ON (h.embedding)
+            OPTIONS {indexConfig: {
+                `vector.dimensions`: 384,
+                `vector.similarity_function`: 'cosine'
+            }}
+            """,
+            """
+            CREATE VECTOR INDEX hotel_embeddings_v2 IF NOT EXISTS
+            FOR (h:Hotel)
+            ON (h.embedding_v2)
+            OPTIONS {indexConfig: {
+                `vector.dimensions`: 768,
+                `vector.similarity_function`: 'cosine'
+            }}
+            """
+        ]
+        
         with self.driver.session() as session:
-            session.run(query)
-            Logger.log("Text index 'hotel_search_text' created.")
+            try:
+                session.run(queries[0])
+                Logger.log("Vector index 'hotel_embeddings' (384d) verified.")
+            except Exception as e:
+                Logger.log(f"Error creating index 1: {e}", Logger.ERROR)
+
+            try:
+                session.run(queries[1])
+                Logger.log("Vector index 'hotel_embeddings_v2' (768d) verified.")
+            except Exception as e:
+                Logger.log(f"Error creating index 2: {e}", Logger.ERROR)
 
     def populate_embeddings(self):
         """
-        Fetches all hotels and creates simple text representations for search.
-        Note: This is a simplified version without actual embeddings.
+        Fetches all hotels, creates rich text, generates both embeddings, and updates the graph.
         """
         fetch_query = """
         MATCH (h:Hotel)-[:LOCATED_IN]->(c:City)-[:LOCATED_IN]->(co:Country)
@@ -56,70 +90,69 @@ class EmbeddingManager:
         
         update_query = """
         MATCH (h:Hotel {hotel_id: $id})
-        SET h.search_text = $search_text
+        SET h.embedding = $embedding,
+            h.embedding_v2 = $embedding_v2,
+            h.search_text = $search_text
         """
         
         with self.driver.session() as session:
             result = session.run(fetch_query)
             hotels = [record.data() for record in result]
             
-            Logger.log(f"Creating search text for {len(hotels)} hotels...")
+            Logger.log(f"Generating dual embeddings for {len(hotels)} hotels...")
             
+            batch_count = 0
             for hotel in hotels:
-                # Construct searchable text
                 search_text = (
-                    f"{hotel['name']} {hotel['city']} {hotel['country']} "
-                    f"{hotel['stars']}star cleanliness{hotel['clean']} "
-                    f"comfort{hotel['comfort']} facilities{hotel['facilities']}"
-                ).lower()
+                    f"Hotel {hotel['name']} in {hotel['city']}, {hotel['country']}. "
+                    f"{hotel['stars']} star rating. "
+                    f"Cleanliness score: {hotel['clean']}. "
+                    f"Comfort score: {hotel['comfort']}. "
+                    f"Facilities score: {hotel['facilities']}."
+                )
                 
-                # Update Node with search text
-                session.run(update_query, id=hotel['id'], search_text=search_text)
+                # Generate Embeddings
+                emb_1 = self.model_1.encode(search_text).tolist()
+                emb_2 = self.model_2.encode(search_text).tolist()
                 
-            Logger.log("Text indexing complete.")
+                # Update Node
+                session.run(update_query, id=hotel['id'], 
+                            embedding=emb_1, 
+                            embedding_v2=emb_2, 
+                            search_text=search_text)
+                            
+                batch_count += 1
+                if batch_count % 10 == 0:
+                    print(f"Processed {batch_count}/{len(hotels)} hotels...", end='\r')
+                    
+            print(f"Processed {batch_count}/{len(hotels)} hotels. Done.")
+            Logger.log("Dual embeddings population complete.")
 
-    def search_similar_hotels(self, query_text: str, top_k: int = 3):
+    def search_similar_hotels(self, query_text: str, top_k: int = 3, model_version: int = 1):
         """
-        Simple text-based search using contains matching with keywords.
+        Semantic search using vector similarity with specified model version.
         """
-        query_lower = query_text.lower()
-        
-        # Extract key search terms
-        search_terms = []
-        keywords = ["paris", "london", "tokyo", "hotel", "luxury", "budget", "star", "clean"]
-        for keyword in keywords:
-            if keyword in query_lower:
-                search_terms.append(keyword)
-        
-        if not search_terms:
-            # If no specific keywords, try to extract city names and other relevant words
-            words = query_lower.replace(",", " ").replace(".", " ").split()
-            search_terms = [word for word in words if len(word) > 3 and word not in ["find", "show", "hotels", "hotel", "give", "want"]]
-        
-        if not search_terms:
+        if not query_text:
             return []
+            
+        index_name = 'hotel_embeddings' if model_version == 1 else 'hotel_embeddings_v2'
+        model = self.model_1 if model_version == 1 else self.model_2
         
-        # Build dynamic query for multiple search terms
-        conditions = []
-        params = {"k": top_k}
+        # 1. Generate embedding for query
+        query_embedding = model.encode(query_text).tolist()
         
-        for i, term in enumerate(search_terms):
-            param_name = f"term_{i}"
-            conditions.append(f"h.search_text CONTAINS ${param_name}")
-            params[param_name] = term
-        
+        # 2. Query the Vector Index
         cypher = f"""
-        MATCH (h:Hotel)
-        WHERE {' OR '.join(conditions)}
-        RETURN h.name as hotel, h.star_rating as stars, 
-               h.average_reviews_score as rating, 
-               0.8 as score
-        ORDER BY h.star_rating DESC, h.average_reviews_score DESC
-        LIMIT $k
+        CALL db.index.vector.queryNodes('{index_name}', $k, $embedding)
+        YIELD node, score
+        RETURN node.name as hotel,
+               node.star_rating as stars,
+               node.average_reviews_score as rating,
+               score
         """
         
         with self.driver.session() as session:
-            result = session.run(cypher, **params)
+            result = session.run(cypher, k=top_k, embedding=query_embedding)
             return [record.data() for record in result]
 
     def format_results(self, results):
@@ -129,6 +162,6 @@ class EmbeddingManager:
         formatted_lines = []
         for idx, res in enumerate(results):
             score = res.get('score', 0)
-            formatted_lines.append(f"{idx+1}. {res.get('hotel')} (Score: {score:.4f})")
+            formatted_lines.append(f"{idx+1}. {res.get('hotel')} (Similarity: {score:.4f})")
             
         return "\n".join(formatted_lines)
