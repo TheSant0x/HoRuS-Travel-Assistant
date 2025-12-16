@@ -24,7 +24,7 @@ base64_str = "/9j/4AAQSkZJRgABAQEBLAEsAAD/6xdoSlAAAQAAAAEAABdeanVtYgAAAB5qdW1kYz
 
 # Configure Streamlit page
 st.set_page_config(
-    page_title="HoRuS Travel Assistant",
+    page_title="HoRuS",
     page_icon="assets/horus_logo.png",
     layout="centered",
     initial_sidebar_state="expanded"
@@ -278,11 +278,18 @@ css = """
     header[data-testid="stHeader"] {
         background-color: transparent !important;
     }
+    /* Hide sidebar collapse button */
+    [data-testid="stSidebarHeader"] {
+        display: none !important;
+    }
+    /* Hide sidebar collapse button */
+    [data-testid="stSidebarCollapseButton"] {
+        display: none !important;
+    }
     
-    /* Ensure sidebar toggle is visible and styled */
-    [data-testid="stSidebarCollapsedControl"] {
-        display: block !important;
-        color: var(--royal-gold) !important;
+    /* Hide element toolbar button container */
+    [data-testid="stElementToolbarButtonContainer"] {
+        display: none !important;
     }
 
     /* Hide anchor links */
@@ -336,7 +343,7 @@ class StreamlitTravelAssistant:
             return False
         return True
     
-    def process_query(self, query: str, model_name: str, retrieval_method: str) -> Dict[str, Any]:
+    def process_query(self, query: str, model_name: str, retrieval_method: str, embedding_model_version: int = 1) -> Dict[str, Any]:
         """Process a single query and return structured results"""
         results = {
             "intent": None,
@@ -370,7 +377,7 @@ class StreamlitTravelAssistant:
                 
                 if retrieval_method in ["embeddings", "both"]:
                     if intent.category in ["search", "recommendation"]:
-                        embedding_results = self.embedder.search_similar_hotels(query)
+                        embedding_results = self.embedder.search_similar_hotels(query, model_version=embedding_model_version)
             
             results["baseline_results"] = baseline_results
             results["embedding_results"] = embedding_results
@@ -494,14 +501,22 @@ def main():
             format_func=lambda x: x.title()
         )
         
+        # Embedding Model Selection
+        embedding_model_name = st.selectbox(
+            "Embedding Model",
+            ["Model 1 (all-MiniLM-L6-v2)", "Model 2 (paraphrase-albert-small-v2)"],
+            index=0
+        )
+        embedding_model_version = 1 if "Model 1" in embedding_model_name else 2
+        
 
         
     # Main Content - Custom Header
     st.markdown("""
-<div style="display: flex; align-items: center; margin-bottom: 20px;">
+<div style="display: flex; align-items: center; margin-bottom: 10px;">
     <div>
         <h1 style="margin: 0; font-size: 2.2rem; color: var(--royal-gold);">HoRuS Travel Assistant</h1>
-        <p style="margin: 5px 0 0 0; color: var(--muted-sand); font-style: italic;">Ask questions about hotels, locations, and travel recommendations.</p>
+        <p style="margin: 5px 0 0 0; color: var(--muted-sand); font-style: italic;">Ask questions about hotels and travel recommendations.</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -547,7 +562,7 @@ def main():
             placeholder.markdown('<div class="typing-indicator">Typing<span class="typing-dots"></span></div>', unsafe_allow_html=True)
             
             try:
-                results = assistant.process_query(query, selected_model, retrieval_method)
+                results = assistant.process_query(query, selected_model, retrieval_method, embedding_model_version)
             finally:
                 # Clear the typing indicator
                 placeholder.empty()
