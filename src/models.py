@@ -2,9 +2,9 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
 
 class Intent(BaseModel):
-    category: Literal["question", "recommendation", "search"] = Field(
+    category: Literal["question", "recommendation", "search", "greeting"] = Field(
         ..., 
-        description="The category of the user's intent. 'question' for specific facts, 'recommendation' for suggestions, 'search' for looking up specific entities."
+        description="The category of the user's intent. 'question' for specific facts, 'recommendation' for suggestions, 'search' for looking up specific entities, 'greeting' for social interactions."
     )
     reasoning: str = Field(..., description="Brief explanation of why this category was chosen.")
 

@@ -40,11 +40,12 @@ Analyze the user's query and classify it into one of the following categories:
 - question: The user is asking for a specific fact (e.g., "Does Hotel X have a pool?", "Where is Paris?").
 - recommendation: The user is asking for suggestions (e.g., "Suggest a romantic hotel", "Where should I stay?").
 - search: The user is searching for a specific entity entry (e.g., "Show me the Hilton", "Find user 123", "List hotels").
+- greeting: The user is greeting the assistant (e.g., "hello", "hi", "hola", "good morning").
 
 You must output a valid JSON object matching the following structure:
 {format_instructions}
 
-Category must be exactly one of: "question", "recommendation", "search".
+Category must be exactly one of: "question", "recommendation", "search", "greeting".
 IMPORTANT: Output ONLY the JSON object. Do not output any explanation or preamble.
 """
         prompt = ChatPromptTemplate.from_messages([

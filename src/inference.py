@@ -11,19 +11,35 @@ models = [
 model = models[0]
 
 def format_prompt(query, context):
+    context_str = ""
+    if context:
+        # Check if context is a list of dicts and format it
+        if isinstance(context, list) and context and isinstance(context[0], dict):
+            lines = []
+            for item in context:
+                # Create a readable string for each hotel/item
+                # Filter out internal keys like 'score' if needed, or just format nicely
+                details = ", ".join([f"{k}: {v}" for k, v in item.items() if k != 'score'])
+                lines.append(f"- {details}")
+            context_str = "\n".join(lines)
+        else:
+            context_str = str(context)
+
     template = f"""
     You are a helpful hotel recommender assistant. 
-    Answer the query directly without asking further questions. Answers only!
+    Answer the user's query based on the provided context.
+    Do not output raw JSON. Provide a natural language response summarizing the recommendations.
     
-    The user's query is: "{query}"
+    IMPORTANT: Do NOT ask any follow-up questions. Do NOT ask for more preferences. Just provide the recommendations based on what you know.
+    
+    User Query: "{query}"
+    
+    Context (Available Hotels):
+    {context_str}
+    
+    Response:
     """
-    
-    if context:
-        template += f"""Use this extra context when relevant:
-        {context}
-        """
     return template
-        
 
 def setup_inference():
     return InferenceClient(
@@ -32,17 +48,26 @@ def setup_inference():
     )
 
 def call_model(client, model_name, prompt):
-    try:
-        # Use the default model instead of the passed model_name for now
-        response = client.chat.completions.create(
-            model="google/gemma-2-2b-it",  # Use a known working model
-            messages=[
-                {"role": "user", "content": prompt}],
-        )   
-        return response.choices[0].message.content
-    except Exception as e:
-        # Fallback to simple text generation if chat completion fails
-        return f"Based on the search results, I found hotels matching your query. The system found hotels in the requested location with good ratings."
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Use the passed model_name
+            print(f"DEBUG: Using model: {model_name}")
+            response = client.chat.completions.create(
+                model=model_name, 
+                messages=[
+                    {"role": "user", "content": prompt}],
+                max_tokens=500
+            )   
+            response_text = response.choices[0].message.content
+            return strip_thinking(response_text)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                # If it's the last attempt, raise the error so the app can handle it
+                raise e
+            # Wait a bit before retrying
+            import time
+            time.sleep(1)
 
 def extract_hfmodel_name(model):
     parts = model.split("/")
@@ -53,6 +78,8 @@ def extract_hfmodel_name(model):
 def strip_thinking(text):
     import re
     try:
-        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        # Remove <think> tags and content
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        return text
     except:
-        return
+        return text
